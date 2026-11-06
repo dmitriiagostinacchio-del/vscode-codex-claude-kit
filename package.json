@@ -1,8 +1,8 @@
 {
   "name": "vscode-codex-claude-kit",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
-  "description": "Experimental visible Claude Code conversation bridge and compact Codex quota footer for VS Code on Windows.",
+  "description": "Experimental open-session Claude Code collaboration bridge and compact Codex quota footer for VS Code on Windows.",
   "license": "MIT",
   "engines": {
     "node": ">=22"

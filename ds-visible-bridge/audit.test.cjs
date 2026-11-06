@@ -31,13 +31,51 @@ test('visible delivery, busy guard, capture tools/result and stable request ID',
   const r=(await h.rpc({action:'status',message_id:id})).result;assert.equal(r.status,'completed');assert.equal(r.reply,'AUDIT_OK');assert.equal(r.tools[0].name,'Read');
  }finally{h.close();}
 });
-test('sidebar detection, hidden panels excluded and ambiguous sessions refused',async()=>{
+test('sidebar detection, closed surfaces excluded and ambiguous sessions refused',async()=>{
  const h=harness({sidebar:true});try{
   assert.equal((await h.rpc({action:'info'})).result.sessions[0].surface,'sidebar');
   h.manager.webviews.clear();assert.equal((await h.rpc({action:'info'})).result.sessions.length,0);
   assert.match((await h.send()).error,/found 0/);
   h.manager.panelComms.set(h.panel,h.comms);h.comms.channels.set('ch2',{sessionId:'other',cwd:h.project,atRest:true});
   assert.match((await h.send()).error,/found 2/);assert.equal((await h.send({session_id:'other'})).result.session_id,'other');
+ }finally{h.close();}
+});
+test('background editor receives messages, replies and follow-up without being revealed',async()=>{
+ const h=harness();try{
+  h.panel.visible=false;
+  const info=(await h.rpc({action:'info'})).result;
+  assert.equal(info.visible_surfaces,0);assert.equal(info.open_surfaces,1);assert.equal(info.sessions[0].visible,false);
+  const first=await h.call('ds_send_message',{project_dir:h.project,session_id:'session',message:'background first'});
+  h.emit({type:'result',result:'background reply'});
+  assert.equal((await h.call('ds_reply_status',{message_id:first.message_id})).reply,'background reply');
+  const next=await h.call('ds_send_message',{project_dir:h.project,session_id:'session',message:'background follow-up'});
+  assert.equal(next.status,'running');assert.equal(h.dispatches(),2);assert.equal(h.panel.visible,false);
+ }finally{h.close();}
+});
+test('background sidebar supports exact session routing and refuses closed channels',async()=>{
+ const h=harness({sidebar:true});try{
+  h.manager.webviews=new Set([{comms:h.comms,isChatSurface:true,isVisible:()=>false}]);
+  h.comms.channels.set('other-channel',{sessionId:'other-session',cwd:h.project,atRest:true});
+  h.manager.sidebarChatShows=()=> 'other-session';
+  const info=(await h.rpc({action:'info'})).result;assert.equal(info.sessions.length,2);assert.equal(info.visible_surfaces,0);
+  assert.match((await h.send()).error,/found 2/);
+  const sent=await h.send({session_id:'session'});assert.equal(sent.result.session_id,'session');
+  h.comms.channels.delete('ch');assert.match((await h.send({session_id:'session'})).error,/found 0/);
+  h.manager.allComms.delete(h.comms);assert.equal((await h.rpc({action:'info'})).result.sessions.length,0);
+ }finally{h.close();}
+});
+test('automatic routing selects last-focused session then pins successful target in background',async()=>{
+ const h=harness();try{
+  const other={...h.comms,channels:new Map([['other',{sessionId:'other-session',cwd:h.project,atRest:true}]])};
+  const otherPanel={visible:false,title:'Other'};h.manager.allComms.add(other);h.manager.panelComms.set(otherPanel,other);
+  h.panel.visible=false;h.manager.lastFocusedChatSurface={comms:h.comms};
+  await h.rpc({action:'info'});
+  const first=await h.call('ds_send_message',{project_dir:h.project,message:'auto choose'});assert.equal(first.session_id,'session');
+  h.emit({type:'result',result:'done'});
+  h.manager.lastFocusedChatSurface={comms:other};
+  const follow=await h.call('ds_send_message',{project_dir:h.project,message:'stay on original target'});assert.equal(follow.session_id,'session');
+  h.comms.channels.get('ch').atRest=false;
+  await assert.rejects(h.call('ds_send_message',{project_dir:h.project,message:'do not silently switch busy target'}),/busy/);
  }finally{h.close();}
 });
 test('manual intervention stops attribution; malformed observer data cannot break native send',async()=>{

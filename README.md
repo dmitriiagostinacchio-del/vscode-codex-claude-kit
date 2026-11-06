@@ -1,10 +1,10 @@
 # VS Code Codex + Claude Code 协作工具包
 
-[下载 v0.2.1 ZIP](downloads/vscode-codex-claude-kit-v0.2.1.zip?raw=true) · [SHA-256](downloads/SHA256SUMS.txt) · [审核记录](AUDIT.md)
+[下载 v0.2.2 ZIP](downloads/vscode-codex-claude-kit-v0.2.2.zip?raw=true) · [SHA-256](downloads/SHA256SUMS.txt) · [审核记录](AUDIT.md)
 
 Windows 上的实验性本地补丁，包含两个可独立安装的功能：
 
-1. **可见会话协作**：Codex 通过 MCP 给已打开的 Claude Code 会话发消息，并读取该会话的实际回复、工具操作和状态。Claude Code 可继续使用用户已配置的 DeepSeek 后端。桥接不另起隐藏模型进程，也不强制固定的规划、执行、验收流程。
+1. **已有会话协作**：Codex 通过 MCP 给已打开且通道存活的 Claude Code 会话发消息（支持后台标签），并读取该会话的实际回复、工具操作和状态。Claude Code 可继续使用用户已配置的 DeepSeek 后端。桥接不另起隐藏模型进程，也不强制固定的规划、执行、验收流程。
 2. **Codex 额度文字**：在输入框底栏显示 `5h 37% | 1week 62%`，表示剩余额度，每 60 秒读取一次。缺失或读取失败显示 `--`，鼠标悬停可分别查看 5 小时和周额度的重置日期、时间与剩余时长（按本地时区显示）。
 
 ## 兼容范围
@@ -40,7 +40,9 @@ node install.cjs --no-mcp
 
 ## 使用协作
 
-打开项目和中间 Claude Code 面板；恢复旧对话后如未建立活动通道，先手动发一句话并等它回复。支持可见的编辑器面板和侧边栏会话。对方忙时拒绝插队；多个候选会话需要指定 `session_id`。
+打开项目和 Claude Code 会话；恢复旧对话后如未建立活动通道，先手动发一句话并等它回复。之后可以切到代码或网页标签，也可以隐藏侧边栏，只要会话通道仍存活，就能继续收发、查询回复。无需把 Claude Code 放到最前面，也不模拟点击或自动切换标签。
+
+Codex 根据项目自动确定目标：优先使用本轮进程中该项目最近成功发送的会话，其次使用最近操作的 Claude Code 会话。同一项目的多个会话无法唯一确定时，Codex 应根据会话信息主动指定 `session_id`，不做例行方向确认；无法确定时报告路由阻塞，不随机派单。对方忙时等待，不悄悄改发其他会话。关闭会话或通道断开后需要重新连接。重载窗口会清除内存中的路由记录。
 
 在 Codex 中可以说：
 
@@ -48,7 +50,7 @@ node install.cjs --no-mcp
 
 > 按已经商量好的内容交给中间的 DS 实现，等它回复后帮我检查改动。
 
-工具：`ds_visible_sessions`、`ds_send_message`、`ds_reply_status`、`ds_cancel_message`。派发后继续调用状态工具读取回复；本包不会主动唤醒一个已闲置的 Codex 对话。请让两边避免同时修改同一文件。原有工具权限和审批继续由对应扩展处理。
+工具：`ds_visible_sessions`、`ds_send_message`、`ds_reply_status`、`ds_cancel_message`。派发后继续调用状态工具读取回复；本包不会主动唤醒一个已闲置的 Codex 对话。工具名 `ds_visible_sessions` 为兼容保留，现在也列出后台会话，`visible` 仅表示显示状态。请让两边避免同时修改同一文件。原有工具权限和审批继续由对应扩展处理。
 
 用户手动插话后，桥接停止把后续回复归给旧任务。取消仅请求中断，已写入的代码不会自动回滚。网络/管道故障导致发送结果不明时，先检查原会话和请求编号，不能盲目重发；可为同一逻辑发送提供稳定 UUID `request_id`。
 

@@ -6,7 +6,7 @@ for(const d of [STATE,RUNS])fs.mkdirSync(d,{recursive:true,mode:0o700});
 exports.attach=function(context,manager,vscode){
  const token=crypto.randomBytes(24).toString('hex'),windowId=crypto.randomUUID();
  const pipe='\\\\.\\pipe\\codex-ds-visible-'+process.pid+'-'+crypto.randomBytes(5).toString('hex');
- const descriptor=path.join(STATE,'window-'+process.pid+'.json'),jobs=new Map(),installed=new Map();
+ const descriptor=path.join(STATE,'window-'+process.pid+'.json'),jobs=new Map(),installed=new Map(),routes=new Map();
  const roots=()=>vscode.workspace.workspaceFolders?.map(f=>f.uri.fsPath)||[];
  const norm=p=>path.resolve(p).toLowerCase();
  const pendingSaves=new Map();let retryTimer=null,disposed=false;
@@ -29,15 +29,16 @@ exports.attach=function(context,manager,vscode){
  function end(job,status,error){if(job.status!=='running')return;job.status=status;job.ended_at=new Date().toISOString();if(error)job.error=error;save(job);}
  function surfaces(){
   const list=[],seen=new Set();
-  for(const s of manager.webviews||[])if(s.isChatSurface&&s.isVisible()&&!seen.has(s.comms)){
-   seen.add(s.comms);list.push({comms:s.comms,title:'Claude Code',surface:s.comms===manager.sidebarComms?'sidebar':'editor'});
+  for(const s of manager.webviews||[])if(s.isChatSurface&&manager.allComms.has(s.comms)&&!seen.has(s.comms)){
+   seen.add(s.comms);list.push({comms:s.comms,title:'Claude Code',surface:s.comms===manager.sidebarComms?'sidebar':'editor',visible:Boolean(s.isVisible())});
   }
-  for(const [panel,comms]of manager.panelComms||[])if(panel.visible&&!seen.has(comms)){seen.add(comms);list.push({comms,title:panel.title,surface:'editor'});}
+  for(const [panel,comms]of manager.panelComms||[])if(manager.allComms.has(comms)&&!seen.has(comms)){seen.add(comms);list.push({comms,title:panel.title,surface:'editor',visible:Boolean(panel.visible)});}
   return list;
  }
  function channels(){return surfaces().flatMap(s=>[...s.comms.channels.entries()]
-  .filter(([,ch])=>s.surface!=='sidebar'||!manager.sidebarChatShows?.()||ch.sessionId===manager.sidebarChatShows())
-  .map(([id,ch])=>({...s,ch,channel_id:id,session_id:ch.sessionId,project_dir:ch.cwd,busy:ch.atRest!==true})));}
+  .map(([id,ch])=>({...s,ch,channel_id:id,session_id:ch.sessionId,project_dir:ch.cwd,busy:ch.atRest!==true,
+   last_focused:s.comms===manager.lastFocusedChatSurface?.comms,
+   preferred:routes.get(norm(ch.cwd||''))?.comms===s.comms&&routes.get(norm(ch.cwd||''))?.channel_id===id})));}
  function observe(comms,event){
   for(const job of jobs.values())if(job.status==='running'&&job.comms===comms&&event.channelId===job.channel_id){
    const m=event.message;
@@ -73,7 +74,7 @@ exports.attach=function(context,manager,vscode){
  }
  async function dispatch(req){
   wire();
-  if(req.action==='info')return {version:'0.2.0',window_id:windowId,mode:'existing-visible-Claude-Code-session',roots:roots(),visible_surfaces:surfaces().length,sessions:channels().map(({comms,ch,...info})=>info)};
+  if(req.action==='info')return {version:'0.2.2',window_id:windowId,window_focused:vscode.window?.state?.focused===true,mode:'existing-open-Claude-Code-session',roots:roots(),open_surfaces:surfaces().length,visible_surfaces:surfaces().filter(s=>s.visible).length,sessions:channels().map(({comms,ch,...info})=>info)};
   if(req.action==='send'){
    if(typeof req.message!=='string'||!req.message.trim()||req.message.length>40000)throw Error('message must contain 1–40000 characters.');
    if(!path.isAbsolute(req.project_dir||''))throw Error('project_dir must be absolute.');
@@ -84,9 +85,13 @@ exports.attach=function(context,manager,vscode){
    if(fs.existsSync(path.join(RUNS,req.request_id+'.json')))throw Error('request_id belongs to an earlier delivery. Read its status before sending again.');
    let candidates=channels().filter(s=>norm(s.project_dir||'')===norm(req.project_dir));
    if(req.session_id)candidates=candidates.filter(s=>s.session_id===req.session_id);
-   if(candidates.length!==1)throw Error('Expected exactly one visible live session; found '+candidates.length+'. Select the intended chat; if needed send one manual message to start its channel.');
+   if(!req.session_id&&candidates.length>1){
+    const preferred=candidates.filter(s=>s.preferred),focused=candidates.filter(s=>s.last_focused),active=candidates.filter(s=>s.session_id===manager.activeSessionId);
+    if(preferred.length===1)candidates=preferred;else if(focused.length===1)candidates=focused;else if(active.length===1)candidates=active;
+   }
+   if(candidates.length!==1)throw Error('Expected exactly one determinable open live session; found '+candidates.length+'. Codex should inspect ds_visible_sessions and supply the intended session_id from task context; do not guess. If no channel exists, the chat must first be started manually.');
    const target=candidates[0];
-   if(target.busy||[...jobs.values()].some(j=>j.status==='running'&&j.comms===target.comms&&j.channel_id===target.channel_id))throw Error('The visible conversation is busy. Wait until it finishes.');
+   if(target.busy||[...jobs.values()].some(j=>j.status==='running'&&j.comms===target.comms&&j.channel_id===target.channel_id))throw Error('The conversation is busy. Wait until it finishes.');
    const job={message_id:req.request_id,window_id:windowId,session_id:target.session_id,channel_id:target.channel_id,project_dir:req.project_dir,status:'running',message:req.message,reply:'',tools:[],created_at:new Date().toISOString(),comms:target.comms};
    jobs.set(job.message_id,job);save(job);
    const message={type:'user',session_id:target.session_id||'',uuid:crypto.randomUUID(),parent_tool_use_id:null,message:{role:'user',content:[{type:'text',text:'【来自 Codex 的协作消息】\n'+req.message}]}};
@@ -95,6 +100,7 @@ exports.attach=function(context,manager,vscode){
     const result=target.comms.transportMessage(target.channel_id,message,false,true);
     if(result?.then)result.catch(error=>end(job,'delivery_uncertain','Transport failed; inspect the original chat before retrying: '+error.message));
    }catch(error){end(job,'delivery_uncertain','Delivery could not be confirmed; inspect the original chat: '+error.message);}
+   if(job.status==='running'||job.status==='completed')routes.set(norm(req.project_dir),{comms:target.comms,channel_id:target.channel_id});
    return publicJob(job);
   }
   if(req.action==='status'||req.action==='cancel'){
@@ -118,7 +124,7 @@ exports.attach=function(context,manager,vscode){
   });socket.on('error',()=>{});
  });
  server.on?.('error',error=>console.warn('[DS bridge] Local pipe unavailable: '+error.message));
- server.listen(pipe,()=>{try{fs.writeFileSync(descriptor,JSON.stringify({pid:process.pid,window_id:windowId,pipe,token,roots:roots(),version:'0.2.0'},null,2),{mode:0o600});}catch(error){console.warn('[DS bridge] Discovery unavailable: '+error.message);server.close();}});
+ server.listen(pipe,()=>{try{fs.writeFileSync(descriptor,JSON.stringify({pid:process.pid,window_id:windowId,pipe,token,roots:roots(),version:'0.2.2'},null,2),{mode:0o600});}catch(error){console.warn('[DS bridge] Discovery unavailable: '+error.message);server.close();}});
  const timer=setInterval(()=>{try{wire();}catch(error){console.warn('[DS bridge] Refresh failed: '+error.message);}},250);wire();
  context.subscriptions.push({dispose(){
   disposed=true;clearInterval(timer);if(retryTimer!==null)clearTimeout(retryTimer);retryTimer=null;server.close();
