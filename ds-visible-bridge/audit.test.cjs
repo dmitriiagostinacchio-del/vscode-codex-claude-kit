@@ -1,6 +1,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),vm=require('node:vm'),crypto=require('node:crypto'),net=require('node:net');
 const uuid=()=>crypto.randomUUID(),tick=()=>new Promise(r=>setImmediate(r));
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
 function harness({lock=false,sidebar=false}={}){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'ds-bridge-audit-')),project=path.join(root,'project');fs.mkdirSync(project);
  let blocked=lock,dispatches=0,fail=false;const originalSend=()=>{};
@@ -9,7 +10,7 @@ function harness({lock=false,sidebar=false}={}){
  if(sidebar){manager.sidebarComms=comms;manager.sidebarChatShows=()=> 'session';manager.webviews=new Set([{comms,isChatSurface:true,isVisible:()=>true}]);}
  const context={subscriptions:[]},mod={exports:{}};
  const localFs={...fs,renameSync(a,b){if(blocked)throw Object.assign(Error('Injected EPERM'),{code:'EPERM'});fs.renameSync(a,b);}};
- vm.runInNewContext(fs.readFileSync(__dirname+'/host-addon.cjs','utf8'),{require:n=>n==='node:fs'?localFs:require(n),exports:mod.exports,module:mod,__dirname:root,process,console:{warn(){}},setTimeout,clearTimeout,setInterval,clearInterval});
+ vm.runInNewContext(fs.readFileSync(__dirname+'/host-addon.cjs','utf8'),{require:n=>n==='node:fs'?localFs:require(n),exports:mod.exports,module:mod,__dirname:root,process,console:{warn(){}},AbortController,setTimeout,clearTimeout,setInterval,clearInterval});
  mod.exports.attach(context,manager,{workspace:{workspaceFolders:[{uri:{fsPath:project}}]}});
  const mcp={exports:{}};vm.runInNewContext(fs.readFileSync(__dirname+'/mcp.cjs','utf8'),{require,module:mcp,exports:mcp.exports,__dirname:root,process,console,setTimeout,clearTimeout});
  const desc=async()=>{for(let i=0;i<50;i++){const p=path.join(root,'state','window-'+process.pid+'.json');if(fs.existsSync(p))return JSON.parse(fs.readFileSync(p));await new Promise(r=>setTimeout(r,10));}throw Error('No descriptor');};
@@ -129,4 +130,71 @@ test('MCP reads live status during file lock and reports disconnected windows ho
   assert.equal((await h.call('ds_reply_status',{message_id:pending.message_id})).status,'disconnected');
   await assert.rejects(h.call('ds_cancel_message',{message_id:pending.message_id}),/not connected/);
  }finally{if(!closed)h.close();}
+});
+test('event wait ignores ordinary log updates, then returns a checkpoint once and completion',async()=>{
+ const h=harness();try{
+  const id=(await h.send()).result.message_id;let settled=false;
+  const waiting=h.call('ds_wait_report',{message_id:id,wait_seconds:5}).then(r=>{settled=true;return r;});
+  await pause(60);
+  for(let i=0;i<10;i++)h.emit({type:'assistant',message:{content:[{type:'text',text:'ordinary progress '+i}]}});
+  h.emit({type:'assistant',message:{content:[{type:'text',text:'[DS_EVENT:wrong-id:blocked] should not wake'}]}});
+  await pause(40);assert.equal(settled,false);
+  h.emit({type:'assistant',message:{content:[{type:'text',text:'[DS_EVENT:'+id+':decision] Need a decision'}]}});
+  const checkpoint=await waiting;assert.equal(checkpoint.report_type,'checkpoint');assert.equal(checkpoint.event_cursor,1);assert.equal(checkpoint.reply,'Need a decision');assert.equal(checkpoint.tools.length,0);
+  let secondSettled=false;const second=h.call('ds_wait_report',{message_id:id,after_event:1,wait_seconds:5}).then(r=>{secondSettled=true;return r});await pause(60);
+  h.emit({type:'assistant',message:{content:[{type:'text',text:'[DS_EVENT:'+id+':decision] Need a decision'}]}});await pause(40);assert.equal(secondSettled,false);
+  h.emit({type:'result',result:'final result'});const done=await second;assert.equal(done.report_type,'completed');assert.equal(done.reply,'final result');assert.equal(done.events.length,0);
+ }finally{h.close();}
+});
+test('cancelling a report wait leaves the DS task running and a later wait can finish',async()=>{
+ const h=harness();try{
+  const id=(await h.send()).result.message_id,controller=new AbortController();
+  const waiting=h.call('ds_wait_report',{message_id:id,wait_seconds:5},{signal:controller.signal});
+  const rejected=assert.rejects(waiting,/cancelled/);await pause(80);controller.abort();await rejected;
+  assert.equal((await h.rpc({action:'status',message_id:id})).result.status,'running');
+  const waitingAgain=h.call('ds_wait_report',{message_id:id,wait_seconds:5});await pause(60);h.emit({type:'result',result:'still completed'});assert.equal((await waitingAgain).report_type,'completed');
+ }finally{h.close();}
+});
+test('event wait timeout is honest and disconnection/intervention resolve promptly',async()=>{
+ const h=harness();let closed=false;try{
+  const id=(await h.send()).result.message_id;
+  assert.equal((await h.call('ds_wait_report',{message_id:id,wait_seconds:0})).report_type,'wait_timeout');
+  await assert.rejects(h.call('ds_wait_report',{message_id:id,wait_seconds:7201}),/0–7200/);
+  const waiting=h.call('ds_wait_report',{message_id:id,wait_seconds:5});await pause(60);
+  h.comms.fromClient({type:'io_message',channelId:'ch',message:{type:'user'}});assert.equal((await waiting).report_type,'user_intervened');
+  const next=(await h.send()).result.message_id;const disconnected=h.call('ds_wait_report',{message_id:next,wait_seconds:5});await pause(60);h.close();closed=true;
+  assert.equal((await disconnected).report_type,'interrupted');
+ }finally{if(!closed)h.close();}
+});
+test('revision chain preserves workflow and stops after three automatic correction rounds',async()=>{
+ const h=harness();try{
+  let previous=(await h.send()).result;const workflow=previous.workflow_id;
+  for(let i=1;i<=3;i++){h.emit({type:'result',result:'needs review'});previous=(await h.send({revision_of:previous.message_id})).result;assert.equal(previous.revision,i);assert.equal(previous.workflow_id,workflow);}
+  h.emit({type:'result',result:'still not done'});assert.match((await h.send({revision_of:previous.message_id})).error,/Three automatic revision/);
+ }finally{h.close();}
+});
+test('MCP cancellation notification aborts only the event wait',async()=>{
+ const h=harness();let child;try{
+  const id=(await h.send()).result.message_id;
+  const script=path.join(h.root,'mcp.cjs');fs.copyFileSync(__dirname+'/mcp.cjs',script);
+  child=require('node:child_process').spawn(process.execPath,[script],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+  const responses=await new Promise((resolve,reject)=>{
+   let buffer='',items=[];const timer=setTimeout(()=>{child.kill();reject(Error('Cancellation response timed out'));},3000);
+   child.on('error',reject);child.stdout.on('data',chunk=>{buffer+=chunk;let n;while((n=buffer.indexOf('\n'))>=0){items.push(JSON.parse(buffer.slice(0,n)));buffer=buffer.slice(n+1);}if(items.some(r=>r.id===1)&&items.some(r=>r.id===2)){clearTimeout(timer);resolve(items);}});
+   child.stdin.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'ds_wait_report',arguments:{message_id:id,wait_seconds:30}}})+'\n');
+   child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/cancelled',params:{requestId:1}})+'\n');
+   child.stdin.write(JSON.stringify({jsonrpc:'2.0',id:2,method:'ping'})+'\n');
+  });
+  assert.equal(responses.find(r=>r.id===1).result.isError,true);assert.match(responses.find(r=>r.id===1).result.content[0].text,/cancelled/);
+  assert.equal((await h.rpc({action:'status',message_id:id})).result.status,'running');
+ }finally{child?.stdin.end();child?.kill();h.close();}
+});
+test('native permission requests return a checkpoint without exposing inputs or approving tools',async()=>{
+ const h=harness();try{
+  const id=(await h.send()).result.message_id;
+  const waiting=h.call('ds_wait_report',{message_id:id,wait_seconds:5});await pause(60);
+  h.comms.send({type:'request',channelId:'ch',requestId:'approval-1',request:{type:'tool_permission_request',toolName:'Bash',inputs:{secret:'do-not-return'}}});
+  const r=await waiting;assert.equal(r.report_type,'checkpoint');assert.equal(r.events[0].kind,'approval_required');assert.match(r.reply,/Bash/);assert.doesNotMatch(JSON.stringify(r),/do-not-return/);
+  assert.equal((await h.rpc({action:'status',message_id:id})).result.status,'running');
+ }finally{h.close();}
 });

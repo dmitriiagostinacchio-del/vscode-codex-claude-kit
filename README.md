@@ -1,6 +1,6 @@
 # VS Code Codex + Claude Code 协作工具包
 
-[下载 v0.2.2 ZIP](downloads/vscode-codex-claude-kit-v0.2.2.zip?raw=true) · [SHA-256](downloads/SHA256SUMS.txt) · [审核记录](AUDIT.md)
+[下载 v0.3.0 ZIP](downloads/vscode-codex-claude-kit-v0.3.0.zip?raw=true) · [SHA-256](downloads/SHA256SUMS.txt) · [审核记录](AUDIT.md)
 
 Windows 上的实验性本地补丁，包含两个可独立安装的功能：
 
@@ -50,9 +50,21 @@ Codex 根据项目自动确定目标：优先使用本轮进程中该项目最�
 
 > 按已经商量好的内容交给中间的 DS 实现，等它回复后帮我检查改动。
 
-工具：`ds_visible_sessions`、`ds_send_message`、`ds_reply_status`、`ds_cancel_message`。派发后继续调用状态工具读取回复；本包不会主动唤醒一个已闲置的 Codex 对话。工具名 `ds_visible_sessions` 为兼容保留，现在也列出后台会话，`visible` 仅表示显示状态。请让两边避免同时修改同一文件。原有工具权限和审批继续由对应扩展处理。
+工具：`ds_visible_sessions`、`ds_send_message`、`ds_wait_report`、`ds_reply_status`、`ds_cancel_message`。派发后优先调用 `ds_wait_report` 等待 DS 的关键节点或最终汇报。原 `ds_reply_status` 保留用于手动检查，不建议反复调用。原 Codex 任务需要处于工具等待中；本包不会启动已经结束或关闭的 Codex 对话。工具名 `ds_visible_sessions` 为兼容保留，现在也列出后台会话，`visible` 仅表示显示状态。请让两边避免同时修改同一文件。原有工具权限和审批继续由对应扩展处理。
 
 用户手动插话后，桥接停止把后续回复归给旧任务。取消仅请求中断，已写入的代码不会自动回滚。网络/管道故障导致发送结果不明时，先检查原会话和请求编号，不能盲目重发；可为同一逻辑发送提供稳定 UUID `request_id`。
+
+## DS 主动汇报与集中验收（v0.3.0）
+
+推荐调用顺序：`ds_send_message` → `ds_wait_report`。等待发生在本地桥接，不会因为普通日志或文件写入而提前返回给 Codex。DS 完成、报告阻塞/决策/失败/约定里程碑，或出现原生权限审批/用户输入请求时，才交回结果。后台会话仍可使用。
+
+默认等待上限为一小时，可设置 `wait_seconds` 到两小时；不是必须等满，事件到达就返回。安装器将 **ds_worker** 的 `tool_timeout_sec` 设置为 7500 秒，其他 MCP 配置和审批不变。使用 `--no-mcp` 或手工注册时，另运行 `node ds-visible-bridge/configure-wait.cjs`，再重载 Codex/VS Code。配置备份放在本地 `.local/`，禁止上传。
+
+关键节点返回后，使用返回的 `event_cursor` 作为下一次 `after_event`，避免重复读取同一事件。完成后，Codex 应检查 diff、必要日志及测试，不把 DS 的声明自动当成验收通过。需要修正时传入上一条 `message_id` 作为 `revision_of` 再派单；同一链最多三轮自动修正，仍未通过就报告原因。用户另开需求不属于原返工链。遇到决策、权限或阻塞时不能盲目自动重试。
+
+DS 的关键节点使用本轮消息专属标记，桥接自动附加汇报约定，无需用户手写标记；原生审批不会被自动批准。普通日志仍在原 Claude Code 对话和本地历史中，可以在验收时按需查看。取消等待只停止接收，停止 DS 需要使用 `ds_cancel_message`。
+
+这是**结果返回到正在等待的原 Codex 任务**，不是向已结束的聊天主动发起新一轮。VS Code、原会话和工具连接需要保持运行；窗口重载、连接断开和超时会明确报告，不能假装已完成。部分客户端或工具执行层可能把长等待拆成调度检查，仍可能产生少量模型轮次；不承诺等待期间绝对零 Token，也不承诺总用量节省百分比。一小时/两小时持续运行尚未做全时长实机测试。
 
 ## 额度显示
 

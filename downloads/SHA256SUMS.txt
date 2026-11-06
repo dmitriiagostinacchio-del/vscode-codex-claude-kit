@@ -1,3 +1,4 @@
 c20b292003eb3c045f8f2b8f33246782c06d405dff73cece52536f7bb16b015d  vscode-codex-claude-kit-v0.2.0.zip
 d0782e6830175b931add4d87a0cc941d01f615ba5a809da6e8229d425815b77d  vscode-codex-claude-kit-v0.2.1.zip
 6cc659df3d8e9cc84e1831a762320b15e176779ac4673b18de8107c8f001e00b  vscode-codex-claude-kit-v0.2.2.zip
+bb771b07ef62244b8adeebe47fb10bbcd6e7a13e7ea96d3fc789d8522994e960  vscode-codex-claude-kit-v0.3.0.zip

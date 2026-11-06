@@ -9,6 +9,6 @@ test('MCP malformed input does not kill the server or pollute stdout',async()=>{
  const responses=out.trim().split('\n').map(x=>JSON.parse(x));
  assert.equal(responses[0].error.code,-32700);assert.equal(responses[1].error.code,-32600);assert.equal(responses[2].error.code,-32600);
  assert.deepEqual(responses.find(x=>x.id===3).result,{});
- const tools=responses.find(x=>x.id===4).result.tools;assert.equal(tools.length,4);
+ const tools=responses.find(x=>x.id===4).result.tools;assert.equal(tools.length,5);
  assert.ok(tools.find(x=>x.name==='ds_send_message').inputSchema.properties.request_id);
 });

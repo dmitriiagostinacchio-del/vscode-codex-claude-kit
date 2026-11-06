@@ -35,6 +35,7 @@ if(folders.includes('ds-visible-bridge')&&!check&&!args.has('--no-mcp')){
   if(config&&!owned)console.log('An existing ds_worker entry belongs to another installation; preserved. Restore/remove it there before registering this copy.');
   else if(restore&&owned){const r=run(codex,['mcp','remove','ds_worker']);if(r.status!==0)throw Error('MCP removal failed');console.log('Removed this package\'s MCP entry.');}
   else if(!restore&&!config){const r=run(codex,['mcp','add','ds_worker','--',process.execPath,entry]);if(r.status!==0)throw Error('MCP registration failed; configure it manually.');console.log('Registered ds_worker MCP.');}
+  if(!restore&&(!config||owned)){const r=run(process.execPath,[path.join(__dirname,'ds-visible-bridge/configure-wait.cjs')]);if(r.stdout)process.stdout.write(r.stdout);if(r.status!==0)throw Error('Report timeout setup failed; see ds-visible-bridge/configure-wait.cjs.');}
  }
 }
 if(!check)console.log('Reload VS Code after finishing. Keep this folder in its final location.');

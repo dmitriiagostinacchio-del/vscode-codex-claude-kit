@@ -12,3 +12,6 @@
 node_modules/
 *.log
 *.zip
+
+# Local config backups may contain credentials
+**/.local/
