@@ -39,3 +39,23 @@ test('window matching, named bucket preference, missing values and bounds',()=>{
   assert.equal(format({rateLimits:{primary:{windowDurationMins:300,usedPercent:-2},secondary:{windowDurationMins:10080,usedPercent:103}}}),'5h 100% | 1week 0%');
  }finally{h.dispose();}
 });
+test('tooltip shows both reset timestamps and duration-matched countdowns',()=>{
+ const h=harness();try{
+  const now=Date.parse('2026-11-06T00:00:00Z');
+  const data={rateLimits:{primary:{windowDurationMins:10080,resetsAt:now/1000+2*86400+3*3600+240},secondary:{windowDurationMins:300,resetsAt:now/1000+3900}}};
+  const text=h.C.quotaTooltip(data,false,now),lines=text.split('\n');
+  assert.match(lines[0],/^5h：.*2026.*重置（还有 1小时5分钟）$/);
+  assert.match(lines[1],/^周额度：.*2026.*重置（还有 2天3小时4分钟）$/);
+  assert.match(h.C.quotaTooltip(data,false,now+60000),/还有 1小时4分钟/);
+  const props=h.C.CodexQuotaFooter();const target={title:''};props.onMouseEnter({currentTarget:target});assert.match(target.title,/5h：/);
+  assert.doesNotMatch(text,/每分钟|更新于|刷新/);
+ }finally{h.dispose();}
+});
+test('tooltip handles missing, invalid, expired and unavailable reset data honestly',()=>{
+ const h=harness();try{
+  assert.equal(h.C.quotaTooltip(null),'5h：未提供重置时间\n周额度：未提供重置时间');
+  for(const resetsAt of [null,undefined,NaN,Infinity,-1,0,'123',1e20])assert.match(h.C.quotaTooltip({rateLimits:{primary:{windowDurationMins:300,resetsAt}}}),/^5h：未提供重置时间/);
+  assert.match(h.C.quotaTooltip({rateLimits:{primary:{windowDurationMins:300,resetsAt:100}}},false,200000),/等待服务端更新/);
+  assert.equal(h.C.quotaTooltip(null,true),'5h：暂时无法读取\n周额度：暂时无法读取');
+ }finally{h.dispose();}
+});

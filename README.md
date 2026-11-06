@@ -1,11 +1,11 @@
 # VS Code Codex + Claude Code 协作工具包
 
-[下载 v0.2.0 ZIP](downloads/vscode-codex-claude-kit-v0.2.0.zip?raw=true) · [SHA-256](downloads/SHA256SUMS.txt) · [审核记录](AUDIT.md)
+[下载 v0.2.1 ZIP](downloads/vscode-codex-claude-kit-v0.2.1.zip?raw=true) · [SHA-256](downloads/SHA256SUMS.txt) · [审核记录](AUDIT.md)
 
 Windows 上的实验性本地补丁，包含两个可独立安装的功能：
 
 1. **可见会话协作**：Codex 通过 MCP 给已打开的 Claude Code 会话发消息，并读取该会话的实际回复、工具操作和状态。Claude Code 可继续使用用户已配置的 DeepSeek 后端。桥接不另起隐藏模型进程，也不强制固定的规划、执行、验收流程。
-2. **Codex 额度文字**：在输入框底栏显示 `5h 37% | 1week 62%`，表示剩余额度，每 60 秒读取一次。缺失或读取失败显示 `--`，鼠标悬停可查看更新时间。
+2. **Codex 额度文字**：在输入框底栏显示 `5h 37% | 1week 62%`，表示剩余额度，每 60 秒读取一次。缺失或读取失败显示 `--`，鼠标悬停可分别查看 5 小时和周额度的重置日期、时间与剩余时长（按本地时区显示）。
 
 ## 兼容范围
 

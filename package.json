@@ -1,10 +1,12 @@
 {
   "name": "vscode-codex-claude-kit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Experimental visible Claude Code conversation bridge and compact Codex quota footer for VS Code on Windows.",
   "license": "MIT",
-  "engines": {"node": ">=22"},
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "node --test setup.test.cjs ds-visible-bridge/audit.test.cjs ds-visible-bridge/protocol.test.cjs codex-quota-footer/audit.test.cjs codex-quota-footer/installer.test.cjs",
     "check": "node install.cjs --check"
