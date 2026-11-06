@@ -1,0 +1,14 @@
+# Local connection credentials and private conversations
+**/state/
+**/messages/
+.env
+.env.*
+# Installer-generated backups of third-party extension code
+**/*.original.js
+**/*.before-quota.js
+**/*-sha256.txt
+**/installed.json
+**/*.tmp
+node_modules/
+*.log
+*.zip

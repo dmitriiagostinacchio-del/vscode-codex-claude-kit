@@ -1,0 +1,2 @@
+# Preserve audited bytes and checksums across Windows checkouts.
+* -text
